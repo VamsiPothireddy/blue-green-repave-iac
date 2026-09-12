@@ -14,6 +14,7 @@ env:
   AWS_REGION: us-east-1                # TODO: set your region
   AWS_ROLE_ARN: arn:aws:iam::PLACEHOLDER_ACCOUNT_ID:role/PLACEHOLDER_ROLE_NAME  # TODO: fill in your AWS OIDC role
   TF_VERSION: "1.7.5"
+  STATE_TABLE: ""  # No longer needed with file-based state
 
 jobs:
   determine-target:
