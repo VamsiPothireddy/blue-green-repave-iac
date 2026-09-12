@@ -8,6 +8,11 @@ variable "environment_name" {
   }
 }
 
+variable "resource_prefix" {
+  description = "Prefix for resource names (e.g., 'blue' or 'green')"
+  type        = string
+}
+
 variable "aws_region" {
   description = "AWS region to deploy into"
   type        = string

@@ -8,7 +8,7 @@ on:
 
 permissions:
   id-token: write   # required for AWS OIDC
-  contents: read
+  contents: write   # required for branch operations
 
 env:
   AWS_REGION: us-east-1                # TODO: set your region
@@ -46,8 +46,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TARGET_ENV: ${{ needs.determine-target.outputs.inactive_env }}
+      TFVARS_FILE: "${{ needs.determine-target.outputs.inactive_env }}.tfvars"
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for branch operations
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -59,6 +62,19 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
+      - name: Create or checkout target branch
+        run: |
+          # Check if the target branch exists
+          if git ls-remote --heads origin $TARGET_ENV | grep -q $TARGET_ENV; then
+            echo "Branch $TARGET_ENV exists, checking it out"
+            git checkout $TARGET_ENV
+            git pull origin $TARGET_ENV
+          else
+            echo "Branch $TARGET_ENV does not exist, creating it from main"
+            git checkout -b $TARGET_ENV main
+            git push -u origin $TARGET_ENV
+          fi
+
       - name: Disable SQS->Lambda trigger for target env (pre-repave)
         run: |
           # TODO: this is also settable via terraform var event_source_mapping_enabled=false
@@ -66,17 +82,21 @@ jobs:
           echo "Disabling event source mapping for $TARGET_ENV before repave"
 
       - name: Terraform destroy (target env)
-        working-directory: terraform/environments/${{ env.TARGET_ENV }}
+        working-directory: terraform/environments
         run: |
-          terraform init
+          terraform init \
+            -backend-config="key=blue-green-repave-iac/$TARGET_ENV/terraform.tfstate"
           terraform destroy -auto-approve \
+            -var-file="$TFVARS_FILE" \
             -var="event_source_mapping_enabled=false"
 
       - name: Terraform apply (target env)
-        working-directory: terraform/environments/${{ env.TARGET_ENV }}
+        working-directory: terraform/environments
         run: |
-          terraform init
+          terraform init \
+            -backend-config="key=blue-green-repave-iac/$TARGET_ENV/terraform.tfstate"
           terraform apply -auto-approve \
+            -var-file="$TFVARS_FILE" \
             -var="event_source_mapping_enabled=true"
 
       - name: Smoke test freshly-repaved environment

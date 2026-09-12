@@ -3,6 +3,11 @@ variable "environment_name" {
   type        = string
 }
 
+variable "resource_prefix" {
+  description = "Prefix for resource names (e.g., 'blue' or 'green')"
+  type        = string
+}
+
 variable "source_bucket_arn" {
   description = "ARN of the S3 bucket that publishes notifications into the buffer queue"
   type        = string

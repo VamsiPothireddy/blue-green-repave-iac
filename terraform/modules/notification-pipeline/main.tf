@@ -15,12 +15,12 @@ terraform {
 }
 
 resource "aws_sqs_queue" "dlq" {
-  name                      = "${var.environment_name}-notification-dlq"
+  name                      = "${var.resource_prefix}-notification-dlq"
   message_retention_seconds = 1209600 # 14 days
 }
 
 resource "aws_sqs_queue" "buffer" {
-  name                       = "${var.environment_name}-notification-buffer"
+  name                       = "${var.resource_prefix}-notification-buffer"
   visibility_timeout_seconds = var.lambda_timeout_seconds * 6 # TODO: tune vs actual Lambda duration
   message_retention_seconds  = 345600                          # 4 days — covers a stuck repave
 
@@ -56,7 +56,7 @@ resource "aws_sqs_queue_policy" "allow_s3" {
 
 # The Lambda itself — placeholder. TODO: point `filename`/`s3_key` at your real deployment package.
 resource "aws_lambda_function" "processor" {
-  function_name = "${var.environment_name}-notification-processor"
+  function_name = "${var.resource_prefix}-notification-processor"
   role          = var.lambda_execution_role_arn # TODO: pass in a real IAM role ARN
   handler       = "handler.lambda_handler"
   runtime       = "python3.12"
@@ -66,6 +66,7 @@ resource "aws_lambda_function" "processor" {
   environment {
     variables = {
       ENVIRONMENT_NAME = var.environment_name
+      RESOURCE_PREFIX = var.resource_prefix
     }
   }
 }
