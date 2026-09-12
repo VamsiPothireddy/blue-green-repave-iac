@@ -1,0 +1,114 @@
+name: Daily Blue/Green Repave
+
+on:
+  schedule:
+    # TODO: adjust time (UTC). Currently 06:00 UTC daily.
+    - cron: "0 6 * * *"
+  workflow_dispatch: {} # allows manual trigger for testing
+
+permissions:
+  id-token: write   # required for AWS OIDC
+  contents: read
+
+env:
+  AWS_REGION: us-east-1                # TODO: set your region
+  AWS_ROLE_ARN: arn:aws:iam::PLACEHOLDER_ACCOUNT_ID:role/PLACEHOLDER_ROLE_NAME  # TODO: fill in your AWS OIDC role
+  STATE_TABLE: blue-green-repave-state
+  TF_VERSION: "1.7.5"
+
+jobs:
+  determine-target:
+    runs-on: ubuntu-latest
+    outputs:
+      active_env: ${{ steps.state.outputs.active_env }}
+      inactive_env: ${{ steps.state.outputs.inactive_env }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Read current active environment from DynamoDB
+        id: state
+        run: |
+          active=$(aws dynamodb get-item \
+            --table-name "$STATE_TABLE" \
+            --key '{"pk": {"S": "env-state"}}' \
+            --query 'Item.active_env.S' --output text)
+          if [ "$active" = "blue" ]; then inactive="green"; else inactive="blue"; fi
+          echo "active_env=$active" >> "$GITHUB_OUTPUT"
+          echo "inactive_env=$inactive" >> "$GITHUB_OUTPUT"
+          echo "Active: $active | Repaving: $inactive"
+
+  repave-inactive:
+    needs: determine-target
+    runs-on: ubuntu-latest
+    env:
+      TARGET_ENV: ${{ needs.determine-target.outputs.inactive_env }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Disable SQS->Lambda trigger for target env (pre-repave)
+        run: |
+          # TODO: this is also settable via terraform var event_source_mapping_enabled=false
+          # on the destroy/apply below — keeping this as an explicit step for clarity/visibility.
+          echo "Disabling event source mapping for $TARGET_ENV before repave"
+
+      - name: Terraform destroy (target env)
+        working-directory: terraform/environments/${{ env.TARGET_ENV }}
+        run: |
+          terraform init
+          terraform destroy -auto-approve \
+            -var="event_source_mapping_enabled=false"
+
+      - name: Terraform apply (target env)
+        working-directory: terraform/environments/${{ env.TARGET_ENV }}
+        run: |
+          terraform init
+          terraform apply -auto-approve \
+            -var="event_source_mapping_enabled=true"
+
+      - name: Smoke test freshly-repaved environment
+        run: |
+          # TODO: real health check against $TARGET_ENV before promoting it.
+          echo "TODO: add smoke tests for $TARGET_ENV here. Fail the job if unhealthy."
+
+  promote-and-flip:
+    needs: [determine-target, repave-inactive]
+    runs-on: ubuntu-latest
+    env:
+      NEW_ACTIVE: ${{ needs.determine-target.outputs.inactive_env }}
+      OLD_ACTIVE: ${{ needs.determine-target.outputs.active_env }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Flip traffic to newly-repaved environment
+        run: |
+          # TODO: this is where the actual cutover happens for LB-fronted workloads:
+          # e.g. update target group weights, or an ALB listener rule, or a Route53
+          # weighted record. For non-LB paths, this is where you'd flip whatever each
+          # resource's own adapter uses (see docs/ARCHITECTURE.md).
+          echo "TODO: flip routing from $OLD_ACTIVE to $NEW_ACTIVE"
+
+      - name: Update DynamoDB active-environment state
+        run: |
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          aws dynamodb put-item \
+            --table-name "$STATE_TABLE" \
+            --item "{\"pk\": {\"S\": \"env-state\"}, \"active_env\": {\"S\": \"$NEW_ACTIVE\"}, \"last_repaved_at\": {\"S\": \"$now\"}}"
+          echo "Active environment is now $NEW_ACTIVE (was $OLD_ACTIVE)"
