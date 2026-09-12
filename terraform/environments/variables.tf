@@ -18,3 +18,9 @@ variable "event_source_mapping_enabled" {
   type        = bool
   default     = true
 }
+
+variable "active" {
+  description = "Whether this environment is currently active (serving traffic)"
+  type        = bool
+  default     = false
+}
