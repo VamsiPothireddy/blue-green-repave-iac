@@ -5,6 +5,6 @@ terraform {
     region         = "us-east-1" # TODO
     dynamodb_table = "TODO-your-tf-lock-table"
     encrypt        = true
-    # Note: When using branch-based approach, we'll pass -backend-config to set the key per branch
+    # Note: Branch-specific state key is set via -backend-config in workflows
   }
 }

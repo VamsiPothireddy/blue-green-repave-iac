@@ -1,0 +1,49 @@
+name: Deploy Environment
+
+on:
+  push:
+    branches:
+      - blue
+      - green
+  workflow_dispatch: {} # allows manual trigger for testing
+
+permissions:
+  id-token: write   # required for AWS OIDC
+  contents: read
+
+env:
+  AWS_REGION: us-east-1                # TODO: set your region
+  AWS_ROLE_ARN: arn:aws:iam::PLACEHOLDER_ACCOUNT_ID:role/PLACEHOLDER_ROLE_NAME  # TODO: fill in your AWS OIDC role
+  TF_VERSION: "1.7.5"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      ENV_NAME: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform plan
+        working-directory: terraform/environments
+        run: |
+          terraform init \
+            -backend-config="key=blue-green-repave-iac/$ENV_NAME/terraform.tfstate"
+          terraform plan -var-file=config.tfvars -out=tfplan
+
+      - name: Terraform apply
+        working-directory: terraform/environments
+        run: |
+          terraform init \
+            -backend-config="key=blue-green-repave-iac/$ENV_NAME/terraform.tfstate"
+          terraform apply tfplan

@@ -26,3 +26,9 @@ module "notification_pipeline" {
   event_source_mapping_enabled  = var.event_source_mapping_enabled
   # TODO: pass source_bucket_arn / lambda_execution_role_arn once real values exist
 }
+
+# Output the active status for reference
+output "environment_status" {
+  description = "Current active status of this environment"
+  value       = var.active
+}

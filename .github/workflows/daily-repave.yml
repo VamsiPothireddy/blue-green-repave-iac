@@ -14,7 +14,6 @@ env:
   AWS_REGION: us-east-1                # TODO: set your region
   AWS_ROLE_ARN: arn:aws:iam::PLACEHOLDER_ACCOUNT_ID:role/PLACEHOLDER_ROLE_NAME  # TODO: fill in your AWS OIDC role
   TF_VERSION: "1.7.5"
-  STATE_TABLE: ""  # No longer needed with file-based state
 
 jobs:
   determine-target:
@@ -30,12 +29,12 @@ jobs:
       - name: Determine active environment from branches
         id: state
         run: |
-          # Check which branch has active=true in its tfvars file
+          # Check which branch has active=true in its config.tfvars file
           echo "Checking blue branch..."
-          if git show blue:terraform/environments/blue.tfvars 2>/dev/null | grep -q "active = true"; then
+          if git show blue:terraform/environments/config.tfvars 2>/dev/null | grep -q "active = true"; then
             active="blue"
             inactive="green"
-          elif git show green:terraform/environments/green.tfvars 2>/dev/null | grep -q "active = true"; then
+          elif git show green:terraform/environments/config.tfvars 2>/dev/null | grep -q "active = true"; then
             active="green"
             inactive="blue"
           else
@@ -52,7 +51,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TARGET_ENV: ${{ needs.determine-target.outputs.inactive_env }}
-      TFVARS_FILE: "${{ needs.determine-target.outputs.inactive_env }}.tfvars"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -93,17 +91,23 @@ jobs:
           terraform init \
             -backend-config="key=blue-green-repave-iac/$TARGET_ENV/terraform.tfstate"
           terraform destroy -auto-approve \
-            -var-file="$TFVARS_FILE" \
+            -var-file=config.tfvars \
             -var="event_source_mapping_enabled=false"
+
+      - name: Terraform plan (target env)
+        working-directory: terraform/environments
+        run: |
+          terraform init \
+            -backend-config="key=blue-green-repave-iac/$TARGET_ENV/terraform.tfstate"
+          terraform plan -var-file=config.tfvars \
+            -var="event_source_mapping_enabled=true" -out=tfplan
 
       - name: Terraform apply (target env)
         working-directory: terraform/environments
         run: |
           terraform init \
             -backend-config="key=blue-green-repave-iac/$TARGET_ENV/terraform.tfstate"
-          terraform apply -auto-approve \
-            -var-file="$TFVARS_FILE" \
-            -var="event_source_mapping_enabled=true"
+          terraform apply tfplan
 
       - name: Smoke test freshly-repaved environment
         run: |
@@ -135,12 +139,12 @@ jobs:
           # resource's own adapter uses (see docs/ARCHITECTURE.md).
           echo "TODO: flip routing from $OLD_ACTIVE to $NEW_ACTIVE"
 
-      - name: Update active status in tfvars files
+      - name: Update active status in config.tfvars files
         run: |
           # Update the old active branch to inactive
           git checkout $OLD_ACTIVE
           git pull origin $OLD_ACTIVE
-          sed -i 's/active = true/active = false/' terraform/environments/$OLD_ACTIVE.tfvars
+          sed -i 's/active = true/active = false/' terraform/environments/config.tfvars
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git commit -am "Set $OLD_ACTIVE to inactive after repave" || echo "No changes to commit"
@@ -149,7 +153,7 @@ jobs:
           # Update the new active branch to active
           git checkout $NEW_ACTIVE
           git pull origin $NEW_ACTIVE
-          sed -i 's/active = false/active = true/' terraform/environments/$NEW_ACTIVE.tfvars
+          sed -i 's/active = false/active = true/' terraform/environments/config.tfvars
           git commit -am "Set $NEW_ACTIVE to active after repave" || echo "No changes to commit"
           git push origin $NEW_ACTIVE
 
